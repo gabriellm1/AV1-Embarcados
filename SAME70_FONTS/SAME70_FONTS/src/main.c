@@ -291,7 +291,7 @@ int main(void) {
 		font_draw_text(&calibri_36, c_seg, 130, 390, 1);
 		seganterior = seg;
 	}
-
+		pmc_sleep(SAM_PM_SMODE_SLEEP_WFI);
 
 	}
 }
