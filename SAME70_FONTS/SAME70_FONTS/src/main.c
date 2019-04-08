@@ -11,11 +11,13 @@
 #include "calibri_36.h"
 #include "arial_72.h"
 
-// Bot?o Placa
-#define BUT_PIO      PIOA
-#define BUT_PIO_ID   ID_PIOA
-#define BUT_IDX  11
-#define BUT_IDX_MASK (1 << BUT_IDX)
+
+
+//butao 1 oled
+#define EBUT1_PIO PIOD //start EXT 9 PD28
+#define EBUT1_PIO_ID 16
+#define EBUT1_PIO_IDX 28
+#define EBUT1_PIO_IDX_MASK (1u << EBUT1_PIO_IDX)
 
 // defines rtc
 #define YEAR        2019
@@ -26,7 +28,12 @@
 #define MINUTE      0
 #define SECOND      0
 
+#define PI          3.14
+#define R           0.325
+
 uint32_t hora, minuto, seg;
+int pulso = 0;
+int dist= 0 ;
 
 static void RTT_init(uint16_t pllPreScale, uint32_t IrqNPulses);
 
@@ -62,12 +69,20 @@ void font_draw_text(tFont *font, const char *text, int x, int y, int spacing) {
 	}	
 }
 
-volatile int but_flag;
+volatile Bool but_flag;
 void but_flag_callback(void){
-	but_flag += 1;
+	but_flag = true;
 }
 
-void velocidade(){}
+
+int velocidade(int pulsos){
+	int w = (2*PI*pulsos)/4; // dT e 4 segundos
+	return w*R;
+}
+
+int distancia(int pulsos){
+	return 2*PI*R*pulsos;
+}
 
 volatile Bool atualiza_temp;
 void RTC_Handler(void)
@@ -151,12 +166,11 @@ void RTT_Handler(void)
 	}
 }
 
-void rtt_init(){
-		static float get_time_rtt(){
-			uint ul_previous_time = rtt_read_timer_value(RTT);
-		}
+static float get_time_rtt(){
+	uint ul_previous_time = rtt_read_timer_value(RTT);
+}
 
-		static void RTT_init(uint16_t pllPreScale, uint32_t IrqNPulses)
+static void RTT_init(uint16_t pllPreScale, uint32_t IrqNPulses)
 		{
 			uint32_t ul_previous_time;
 
@@ -179,15 +193,27 @@ void rtt_init(){
 }
 
 void io_init(){
-	pmc_enable_periph_clk(BUT_PIO_ID);
+	pmc_enable_periph_clk(EBUT1_PIO_ID);
 	// Configura PIO para lidar com o pino do bot?o como entrada
 	// com pull-up
-	pio_configure(BUT_PIO, PIO_INPUT, BUT_IDX_MASK, PIO_PULLUP);
+	pio_configure(EBUT1_PIO, PIO_INPUT, EBUT1_PIO_IDX_MASK, PIO_PULLUP);
+	pio_set_debounce_filter(EBUT1_PIO,EBUT1_PIO_IDX_MASK,20);
+
 	
-	pio_handler_set(BUT_PIO,
-	BUT_PIO_ID,
-	BUT_IDX_MASK,
-	PIO_IT_RISE_EDGE,
+	// Ativa interrup??o
+	pio_enable_interrupt(EBUT1_PIO, EBUT1_PIO_IDX_MASK);
+	
+	
+
+	// Configura NVIC para receber interrupcoes do PIO do botao
+	// com prioridade 1 (quanto mais pr?ximo de 0 maior)
+	NVIC_EnableIRQ(EBUT1_PIO_ID);
+	NVIC_SetPriority(EBUT1_PIO_ID, 1); // Prioridade 1
+	
+	pio_handler_set(EBUT1_PIO,
+	EBUT1_PIO_ID,
+	EBUT1_PIO_IDX_MASK,
+	PIO_IT_FALL_EDGE,
 	but_flag_callback);
 }
 
@@ -200,6 +226,10 @@ int main(void) {
 	io_init();
 	rtc_init();
 	
+
+	
+	f_rtt_alarme = true;
+	
 	rtc_set_date_alarm(RTC, 1, MOUNTH, 1, DAY);
 	rtc_set_time_alarm(RTC, 1, HOUR, 1, MINUTE, 1, SECOND+1);
 	uint32_t seganterior;
@@ -210,21 +240,57 @@ int main(void) {
 	font_draw_text(&calibri_36, "Tempo total:", 20, 340, 1);
 
 	while(1) {
-		
+	
+	if(but_flag){
+		pulso+=1;
+		but_flag = false;
+	}	
+	
+	if (f_rtt_alarme){
 
-			rtc_get_time(RTC, &hora, &minuto, &seg);
+      uint16_t pllPreScale = (int) (((float) 32768) / 1.0);
+      uint32_t irqRTTvalue  = 8;
+      
+      // reinicia RTT para gerar um novo IRQ
+      RTT_init(pllPreScale, irqRTTvalue);         
+      
 
-			sprintf(c_hora,"%d",hora);
-			sprintf(c_min,"%d",minuto);
-			sprintf(c_seg,"%d",seg);
-			if(seganterior!=seg){
-				font_draw_text(&calibri_36, "           ", 30, 390, 1);
-				font_draw_text(&calibri_36, c_hora, 30, 390, 1);
-				font_draw_text(&calibri_36,  c_min , 60, 390, 1);
-				font_draw_text(&calibri_36, c_seg, 90, 390, 1);
-				seganterior = seg;
-			}
+      
+      /*
+       * CLEAR FLAG
+       */
+      f_rtt_alarme = false;
+	  
+		char distc[32];
+		dist += distancia(pulso);
+		sprintf(distc,"%d",dist);
+		font_draw_text(&calibri_36, "         ", 30, 60, 1);
+		font_draw_text(&calibri_36, distc, 30, 60, 1);
+	   
+		char vel[32];
+		sprintf(vel,"%d",velocidade(pulso));
+		font_draw_text(&calibri_36, "         ", 30, 220, 1);
+		font_draw_text(&calibri_36, vel, 30, 220, 1);
+		pulso = 0;
+    }
+
+
+	rtc_get_time(RTC, &hora, &minuto, &seg);
+
+	sprintf(c_hora,"%d",hora);
+	sprintf(c_min,"%d",minuto);
+	sprintf(c_seg,"%d",seg);
+	if(seganterior!=seg){
+		font_draw_text(&calibri_36, "                                    ", 30, 390, 1);
+		font_draw_text(&calibri_36, c_hora, 30, 390, 1);
+		font_draw_text(&calibri_36, ":", 50, 390, 1);
+		font_draw_text(&calibri_36,  c_min , 80, 390, 1);
+		font_draw_text(&calibri_36, ":", 100, 390, 1);
+		font_draw_text(&calibri_36, c_seg, 130, 390, 1);
+		seganterior = seg;
+	}
 
 
 	}
 }
+
