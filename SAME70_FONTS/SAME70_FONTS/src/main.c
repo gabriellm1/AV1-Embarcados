@@ -28,7 +28,11 @@
 
 uint32_t hora, minuto, seg;
 
+static void RTT_init(uint16_t pllPreScale, uint32_t IrqNPulses);
+
 struct ili9488_opt_t g_ili9488_display_opt;
+
+volatile Bool f_rtt_alarme = false;
 
 void configure_lcd(void){
 	/* Initialize display parameter */
@@ -58,13 +62,56 @@ void font_draw_text(tFont *font, const char *text, int x, int y, int spacing) {
 	}	
 }
 
-volatile Bool but_flag;
+volatile int but_flag;
 void but_flag_callback(void){
-	but_flag = true;
+	but_flag += 1;
 }
 
+void velocidade(){}
+
+volatile Bool atualiza_temp;
+void RTC_Handler(void)
+{
+	uint32_t ul_status = rtc_get_status(RTC);
+
+	uint32_t hour, minute, second;
+	/*
+	*  Verifica por qual motivo entrou
+	*  na interrupcao, se foi por segundo
+	*  ou Alarm
+	*/
+	if ((ul_status & RTC_SR_SEC) == RTC_SR_SEC) {
+		rtc_clear_status(RTC, RTC_SCCR_SECCLR);
+	}
+	
+	/* Time or date alarm */
+	if ((ul_status & RTC_SR_ALARM) == RTC_SR_ALARM) {
+		rtc_clear_status(RTC, RTC_SCCR_ALRCLR);
+
+		if(atualiza_temp == 1){
+			atualiza_temp = 0;
+			rtc_get_time(RTC, &hour, &minute, &second);
+			rtc_set_time_alarm(RTC, 1, hour, 1, minute, 1, second+1);
+
+			
+		}
+		else if(atualiza_temp == 0){
+			atualiza_temp = 1;
+			rtc_get_time(RTC, &hour, &minute, &second);
+			rtc_set_time_alarm(RTC, 1, hour, 1, minute, 1, second+1);
 
 
+		}
+		
+			
+	}
+	
+	rtc_clear_status(RTC, RTC_SCCR_ACKCLR);
+	rtc_clear_status(RTC, RTC_SCCR_TIMCLR);
+	rtc_clear_status(RTC, RTC_SCCR_CALCLR);
+	rtc_clear_status(RTC, RTC_SCCR_TDERRCLR);
+	
+}
 
 void rtc_init(){
 		/* Configura o PMC */
@@ -87,6 +134,50 @@ void rtc_init(){
 		rtc_enable_interrupt(RTC,  RTC_IER_ALREN);
 }
 
+void RTT_Handler(void)
+{
+	uint32_t ul_status;
+
+	/* Get RTT status */
+	ul_status = rtt_get_status(RTT);
+
+	/* IRQ due to Time has changed */
+	if ((ul_status & RTT_SR_RTTINC) == RTT_SR_RTTINC) {  }
+
+	/* IRQ due to Alarm */
+	if ((ul_status & RTT_SR_ALMS) == RTT_SR_ALMS) {
+		//pin_toggle(LED_PIO, LED_IDX_MASK);    // AQUI
+		f_rtt_alarme = true;                  // flag RTT alarme
+	}
+}
+
+void rtt_init(){
+		static float get_time_rtt(){
+			uint ul_previous_time = rtt_read_timer_value(RTT);
+		}
+
+		static void RTT_init(uint16_t pllPreScale, uint32_t IrqNPulses)
+		{
+			uint32_t ul_previous_time;
+
+			/* Configure RTT for a 1 second tick interrupt */
+			rtt_sel_source(RTT, false);
+			rtt_init(RTT, pllPreScale);
+	
+			ul_previous_time = rtt_read_timer_value(RTT);
+			while (ul_previous_time == rtt_read_timer_value(RTT));
+	
+			rtt_write_alarm_time(RTT, IrqNPulses+ul_previous_time);
+
+			/* Enable RTT interrupt */
+			NVIC_DisableIRQ(RTT_IRQn);
+			NVIC_ClearPendingIRQ(RTT_IRQn);
+			NVIC_SetPriority(RTT_IRQn, 0);
+			NVIC_EnableIRQ(RTT_IRQn);
+			rtt_enable_interrupt(RTT, RTT_MR_ALMIEN);
+	
+}
+
 void io_init(){
 	pmc_enable_periph_clk(BUT_PIO_ID);
 	// Configura PIO para lidar com o pino do bot?o como entrada
@@ -100,11 +191,7 @@ void io_init(){
 	but_flag_callback);
 }
 
-char escreve_num(int num){
-	char buffer[32];
-	sprintf(buffer,"%d",num);
-	return buffer;
-}
+
 
 int main(void) {
 	board_init();
@@ -113,12 +200,31 @@ int main(void) {
 	io_init();
 	rtc_init();
 	
-	
+	rtc_set_date_alarm(RTC, 1, MOUNTH, 1, DAY);
+	rtc_set_time_alarm(RTC, 1, HOUR, 1, MINUTE, 1, SECOND+1);
+	uint32_t seganterior;
+	char c_hora[32],c_min[32],c_seg[32];
+
 	font_draw_text(&calibri_36, "Distancia total:", 20, 20, 1);
 	font_draw_text(&calibri_36, "V.Instantanea:", 20, 180, 1);
 	font_draw_text(&calibri_36, "Tempo total:", 20, 340, 1);
-	font_draw_text(&calibri_36, escreve_num(20), 30, 390, 1);
+
 	while(1) {
 		
+
+			rtc_get_time(RTC, &hora, &minuto, &seg);
+
+			sprintf(c_hora,"%d",hora);
+			sprintf(c_min,"%d",minuto);
+			sprintf(c_seg,"%d",seg);
+			if(seganterior!=seg){
+				font_draw_text(&calibri_36, "           ", 30, 390, 1);
+				font_draw_text(&calibri_36, c_hora, 30, 390, 1);
+				font_draw_text(&calibri_36,  c_min , 60, 390, 1);
+				font_draw_text(&calibri_36, c_seg, 90, 390, 1);
+				seganterior = seg;
+			}
+
+
 	}
 }
