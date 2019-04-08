@@ -77,7 +77,7 @@ void but_flag_callback(void){
 
 int velocidade(int pulsos){
 	int w = (2*PI*pulsos)/4; // dT e 4 segundos
-	return w*R;
+	return w*R*3.6;
 }
 
 int distancia(int pulsos){
@@ -266,11 +266,13 @@ int main(void) {
 		sprintf(distc,"%d",dist);
 		font_draw_text(&calibri_36, "         ", 30, 60, 1);
 		font_draw_text(&calibri_36, distc, 30, 60, 1);
+		font_draw_text(&calibri_36, "m", 70, 60, 1);
 	   
 		char vel[32];
 		sprintf(vel,"%d",velocidade(pulso));
 		font_draw_text(&calibri_36, "         ", 30, 220, 1);
 		font_draw_text(&calibri_36, vel, 30, 220, 1);
+		font_draw_text(&calibri_36, "km/h", 70, 220, 1);
 		pulso = 0;
     }
 
